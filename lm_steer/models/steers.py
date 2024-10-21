@@ -37,6 +37,7 @@ class Projected_Adaptor(nn.Module):
     def set_value(self, steer_values):
         self.steer_values = steer_values
 
+    # Important (where training happens)
     def forward(self, state):
         if self.steer_values.abs().sum() == 0:
             return state.matmul(

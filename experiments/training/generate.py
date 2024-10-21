@@ -2,6 +2,9 @@ import json
 from tqdm import tqdm
 import torch
 
+import sys
+sys.path.append("/workspace/codebase/LM-Steer/")
+
 from lm_steer.arguments import parse_args
 from lm_steer.models.get_model import get_model
 

@@ -4,6 +4,9 @@ import torch
 from torch.utils.data import DataLoader
 from torch.optim import Adam
 
+import sys
+sys.path.append("/workspace/codebase/LM-Steer/")
+
 from lm_steer.arguments import parse_args
 from lm_steer.models.get_model import get_model
 from lm_steer.utils import RunningMean
@@ -12,53 +15,67 @@ from data import load_dataset
 
 
 def main(args):
+    # get data from HF
     train_data = load_dataset(args.dataset_name, args.data_dir, args.subset)
+    # Create pytorch dataloader
     dataloader = DataLoader(
         train_data, batch_size=args.batch_size,
         shuffle=True)
+    # Iterator for the dataloader instance
     data_iter = iter(dataloader)
 
     device = torch.device("cuda:0") if args.cuda else torch.device("cpu")
-    model, tokenizer = get_model(
+
+    # Get model and tokenizer for the lm_steer's specific models
+    # Check 
+    model, tokenizer = get_model( # File at -> /workspace/codebase/LM-Steer/lm_steer/models/get_model.py
         args.model_name, args.adapted_component, args.adaptor_class,
         args.num_steers,
         args.rank, args.epsilon, args.init_var, args.low_resource_mode)
+    
     model.to_device(device)
 
     print("number of training steps:", args.n_steps)
     start_step = 0
+    
+    # Checking if there are any checkpoints
     if os.path.exists(args.ckpt_name):
         ckpt = torch.load(args.ckpt_name)
         model.load_state_dict(ckpt[1])
         start_step = ckpt[2]
         print(f"resume training from {start_step}")
+    
+    # Initializing the Adam optimizer
     if args.optimizer == "Adam":
         optimizer = Adam(model.parameters(), lr=args.lr)
 
     pbar = tqdm(range(start_step, args.n_steps))
-    loss_mean = RunningMean(args.gamma_mean)
+    loss_mean = RunningMean(args.gamma_mean) # Smoothening running mean with gamma value
     scaler = torch.cuda.amp.GradScaler()
-
+    
+    # Training starting
     for step_i in pbar:
+        
         batch = next(data_iter, None)
         if batch is None:
             data_iter = iter(dataloader)
             batch = next(data_iter, None)
 
-        cur_batch_size = len(batch["text"])
-        batch_stance = torch.zeros(cur_batch_size, args.num_steers).to(device)
+        cur_batch_size = len(batch["text"]) # Get the batch size
+        batch_stance = torch.zeros(cur_batch_size, args.num_steers).to(device) # Initialize a tensor of size (batch size) X (number of steers)
         batch_stance[:, args.training_steer] = torch.Tensor(
             batch["label"]).to(device)
         if args.dummy_steer is not None:
             batch_stance[:, args.dummy_steer] = 1
         batch_text = batch["text"]
+        # Inititialize the tokenizer with the cmd arguments
         tokenized = tokenizer(batch_text, padding=True,
                               max_length=args.max_length, truncation=True)
         input_ids = torch.LongTensor(tokenized["input_ids"]).to(device)
 
+        # Gradients are reset to None. This is done to reduce the memory footprint.
         optimizer.zero_grad()
-        attention_mask = torch.LongTensor(tokenized["attention_mask"]).to(
-            device)
+        attention_mask = torch.LongTensor(tokenized["attention_mask"]).to(device)
         if args.low_resource_mode:
             with torch.amp.autocast(
                 device_type="cuda", dtype=torch.float16
